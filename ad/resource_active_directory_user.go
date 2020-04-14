@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	"strings"
 
 	"github.com/hashicorp/terraform/helper/schema"
 	"gopkg.in/ldap.v3"
@@ -32,6 +31,11 @@ func resourceUser() *schema.Resource {
 				Required: true,
 				ForceNew: true,
 			},
+			"ou_distinguished_name": {
+				Type:     schema.TypeString,
+				Required: true,
+				ForceNew: true,
+			},
 			"logon_name": {
 				Type:     schema.TypeString,
 				Required: true,
@@ -40,6 +44,30 @@ func resourceUser() *schema.Resource {
 			"password": {
 				Type:     schema.TypeString,
 				Required: true,
+				ForceNew: true,
+			},
+			"description": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Default:  nil,
+				ForceNew: true,
+			},
+			"must_change_pw": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  true,
+				ForceNew: true,
+			},
+			"cannot_change_pw": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+				ForceNew: true,
+			},
+			"password_not_expire": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
 				ForceNew: true,
 			},
 		},
@@ -52,27 +80,29 @@ func resourceADUserCreate(d *schema.ResourceData, m interface{}) error {
 	client := m.(*ldap.Conn)
 	firstName := d.Get("first_name").(string)
 	lastName := d.Get("last_name").(string)
-	pass := d.Get("password").(string)
 	domain := d.Get("domain").(string)
+	pass := d.Get("password").(string)
 	logonName := d.Get("logon_name").(string)
+	must_change_pw := d.Get("must_change_pw").(bool)
+	cannot_change_pw := d.Get("cannot_change_pw").(bool)
+	password_not_expire := d.Get("password_not_expire").(bool)
 	upn := logonName + "@" + domain
+	desc := d.Get("description").(string)
 	userName := firstName + " " + lastName
 	var dnOfUser string // dnOfUser: distingished names uniquely identifies an entry to AD.
-	dnOfUser += "CN=" + userName + ",CN=Users"
-	domainArr := strings.Split(domain, ".")
-	for _, i := range domainArr {
-		dnOfUser += ",DC=" + i
-	}
+	dnOfUser += "CN=" + userName
+	dnOfUser += "," + d.Get("ou_distinguished_name").(string)
 
 	log.Printf("[DEBUG] dnOfUser: %s ", dnOfUser)
 	log.Printf("[DEBUG] Adding user : %s ", userName)
-	err := addUser(userName, dnOfUser, client, upn, lastName, pass)
+	err := addUser(userName, logonName, dnOfUser, client, upn, lastName, pass, desc, must_change_pw, cannot_change_pw, password_not_expire)
 	if err != nil {
 		log.Printf("[ERROR] Error while adding user: %s ", err)
 		return fmt.Errorf("Error while adding user %s", err)
 	}
 	log.Printf("[DEBUG] User Added success: %s", userName)
-	d.SetId(domain + "/" + userName)
+	//d.SetId(domain + "/" + userName)
+	d.SetId(dnOfUser)
 	return nil
 }
 
@@ -82,17 +112,11 @@ func resourceADUserRead(d *schema.ResourceData, m interface{}) error {
 	client := m.(*ldap.Conn)
 	firstName := d.Get("first_name").(string)
 	lastName := d.Get("last_name").(string)
-	domain := d.Get("domain").(string)
+	//domain := d.Get("domain").(string)
 	userName := firstName + " " + lastName
 	var dnOfUser string // dnOfUser: distingished names uniquely identifies an entry to AD.
-	domainArr := strings.Split(domain, ".")
-	dnOfUser = "dc=" + domainArr[0]
-	for index, i := range domainArr {
-		if index == 0 {
-			continue
-		}
-		dnOfUser += ",dc=" + i
-	}
+	dnOfUser += d.Get("ou_distinguished_name").(string)
+
 	log.Printf("[DEBUG] dnOfUser: %s ", dnOfUser)
 	log.Printf("[DEBUG] Deleting user : %s ", userName)
 
@@ -135,14 +159,11 @@ func resourceADUserDelete(d *schema.ResourceData, m interface{}) error {
 	client := m.(*ldap.Conn)
 	firstName := d.Get("first_name").(string)
 	lastName := d.Get("last_name").(string)
-	domain := d.Get("domain").(string)
+	//domain := d.Get("domain").(string)
 	userName := firstName + " " + lastName
 	var dnOfUser string
-	dnOfUser += "CN=" + userName + ",CN=Users"
-	domainArr := strings.Split(domain, ".")
-	for _, i := range domainArr {
-		dnOfUser += ",DC=" + i
-	}
+	dnOfUser += "CN=" + userName
+	dnOfUser += "," + d.Get("ou_distinguished_name").(string)
 	log.Printf("[DEBUG] dnOfUser: %s ", dnOfUser)
 	log.Printf("[DEBUG] deleting user : %s ", userName)
 	err := delUser(userName, dnOfUser, client)
@@ -155,14 +176,37 @@ func resourceADUserDelete(d *schema.ResourceData, m interface{}) error {
 }
 
 // Helper function for adding user:
-func addUser(userName string, dnName string, adConn *ldap.Conn, upn string, lastName string, pass string) error {
+func addUser(userName string, logonName string, dnName string, adConn *ldap.Conn, upn string, lastName string, pass string, desc string,
+	must_change_pw bool, cannot_change_pw bool, password_not_expire bool) error {
+	userAccountControlValue := 544
+	if cannot_change_pw {
+		log.Printf("[DEBUG] addUser: setting cannot_change_pw true")
+		userAccountControlValue += 64
+	}
+	if password_not_expire {
+		log.Printf("[DEBUG] addUser: setting password_not_expire true")
+		userAccountControlValue += 65536
+	}
+	log.Printf("[DEBUG] addUser: final userAccountControlValue computed: %s", strconv.Itoa(userAccountControlValue))
 	a := ldap.NewAddRequest(dnName, nil) // returns a new AddRequest without attributes " with dn".
 	a.Attribute("objectClass", []string{"organizationalPerson", "person", "top", "user"})
-	a.Attribute("sAMAccountName", []string{userName})
+	a.Attribute("sAMAccountName", []string{logonName})
 	a.Attribute("userPrincipalName", []string{upn})
 	a.Attribute("name", []string{userName})
 	a.Attribute("sn", []string{lastName})
 	a.Attribute("userPassword", []string{pass})
+	a.Attribute("userAccountControl", []string{strconv.Itoa(userAccountControlValue)}) //Default to enabled account
+	if !must_change_pw {
+		log.Printf("[DEBUG] addUser: setting must_change_pw false")
+		a.Attribute("pwdLastSet", []string{"-1"})
+	}
+
+	if desc != "" {
+		log.Printf("[DEBUG] addUser: setting description: %s", desc)
+		a.Attribute("description", []string{desc})
+	}
+
+	log.Printf("[DEBUG] addUser: ldap request: %+v", a)
 
 	err := adConn.Add(a)
 	if err != nil {

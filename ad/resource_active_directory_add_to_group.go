@@ -64,8 +64,9 @@ func resourceAddToGroupRead(d *schema.ResourceData, meta interface{}) error {
 	targetGroup := d.Get("target_group").(string)
 	log.Printf("[DEBUG] Searching for members of %s", targetGroup)
 	splitTargetGroup := strings.Split(targetGroup, ",") // split target group by commas
+	log.Printf("[DEBUG] Searching using base dn of %s", strings.Join(splitTargetGroup[1:len(splitTargetGroup)], ","))
 	searchRequest := ldap.NewSearchRequest(
-		splitTargetGroup[len(splitTargetGroup)-2]+","+splitTargetGroup[len(splitTargetGroup)-1], // Make BaseDN from last two elements of split target group
+		strings.Join(splitTargetGroup[1:len(splitTargetGroup)], ","), // Make BaseDN by stripping off the leading "cn=" element
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		"(&(|(objectCategory=user)(objectCategory=group))(memberOf="+targetGroup+"))", // Find users and groups that are members of targetGroup
 		[]string{"dn"}, // A list attributes to retrieve
@@ -104,8 +105,9 @@ func resourceAddToGroupDelete(d *schema.ResourceData, meta interface{}) error {
 	targetGroup := d.Get("target_group").(string)
 	log.Printf("[DEBUG] Searching for members of %s", targetGroup)
 	splitTargetGroup := strings.Split(targetGroup, ",") // split target group by commas
+	log.Printf("[DEBUG] Searching using base dn of %s", strings.Join(splitTargetGroup[1:len(splitTargetGroup)], ","))
 	searchRequest := ldap.NewSearchRequest(
-		splitTargetGroup[len(splitTargetGroup)-2]+","+splitTargetGroup[len(splitTargetGroup)-1], // Make BaseDN from last two elements of split target group
+		strings.Join(splitTargetGroup[1:len(splitTargetGroup)], ","), // Make BaseDN by stripping off the leading "cn=" element
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		"(&(|(objectCategory=user)(objectCategory=group))(memberOf="+targetGroup+"))", // Find users and groups that are members of targetGroup
 		[]string{"dn"}, // A list attributes to retrieve

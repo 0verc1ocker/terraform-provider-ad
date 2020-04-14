@@ -151,7 +151,9 @@ func resourceADGroupToOUCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	log.Printf("[DEBUG] Group Added to AD successfully: %s", groupName)
-	d.SetId(OUDistinguishedName + "/" + groupName)
+	//d.SetId(OUDistinguishedName + "/" + groupName)
+	d.SetId(dnOfGroup)
+
 	return nil
 }
 
